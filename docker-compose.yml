@@ -21,7 +21,7 @@ services:
     depends_on:
       node:
         condition: service_healthy
-    command: asicseer-pool -l 7 -k -c /asicseer/conf/asicseer-pool.conf
+    command: asicseer-pool -l 7 -c /asicseer/conf/asicseer-pool.conf
 
   web:
     image: nginx:alpine
