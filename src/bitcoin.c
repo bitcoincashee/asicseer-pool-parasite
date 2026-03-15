@@ -487,7 +487,6 @@ char *send_to_address(connsock_t *cs, const char *addr, double amount_bch)
     res_val = json_object_get(val, "result");
     if (res_val && !json_is_null(res_val) && json_is_string(res_val)) {
         ret = strdup(json_string_value(res_val));
-        LOGWARNING("Block finder bonus %.8f BCH sent to %s, txid: %s", amount_bch, addr, ret);
     } else {
         json_t *err_val = json_object_get(val, "error");
         char *err_s = err_val && !json_is_null(err_val) ? json_dumps(err_val, JSON_NO_UTF8) : NULL;

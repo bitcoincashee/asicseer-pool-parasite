@@ -7,7 +7,7 @@ services:
       - "8333:8333"
     volumes:
       - ./node-data:/data
-      - ./node-conf/bitcoin.conf:/data/bitcoin.conf:ro
+      - ./node-conf/bitcoin.conf:/data/bitcoin.conf
     healthcheck:
       test: ["CMD", "/entrypoint.sh", "bitcoin-cli", "getblockchaininfo"]
 
@@ -22,4 +22,15 @@ services:
       node:
         condition: service_healthy
     command: asicseer-pool -l 7 -k -c /asicseer/conf/asicseer-pool.conf
+
+  web:
+    image: nginx:alpine
+    user: root
+    ports:
+      - "80:80"
+    volumes:
+      - ./pool-logs:/var/www/pool:ro
+      - ./nginx-conf/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - pool
 

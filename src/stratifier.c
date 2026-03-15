@@ -59,7 +59,7 @@ static const double nonces = 4294967296;
 #define PAYOUT_USERS    100 /* Number of top users that get reward each block */
 #define PAYOUT_REWARDS  150 /* Max number of users rewarded each block */
 #define SATOSHIS	100000000 /* Satoshi to a BTC */
-#define FINDER_BONUS_SATS 100000000ULL /* 1 BCH paid to block finder post-confirmation */
+#define FINDER_BONUS_SATS 100000000ULL /* 1 BCH paid to block finder from pool wallet after 100 confirmations */
 #if PAYOUT_REWARDS * CBGENLEN > MAX_CB_SPACE
 #error Please set PAYOUT_REWARDS to fit inside a coinbase tx (MAX_CB_SPACE)!
 #endif
@@ -863,7 +863,6 @@ skip:
 static uint64_t add_coinbase_payouts(const pool_t *ckp, workbase_t *wb, cb1_buffer_t *cb1_buf)
 {
     uint64_t g64, f64, pf64, df64;
-    uint64_t finder_bonus = 0; /* sats reserved in pool's coinbase output for the block finder bonus */
     int64_t c64;
     sdata_t *sdata = ckp->sdata;
     size_t pool_amt_pos = 0;
@@ -872,12 +871,9 @@ static uint64_t add_coinbase_payouts(const pool_t *ckp, workbase_t *wb, cb1_buff
     // Generation value
     g64 = wb->coinbasevalue; // generation (reward)
 
-    /* Reserve 1 BCH for the block finder bonus (non-solo mode only).
-     * This amount sits in the pool's coinbase output and is paid out to the
-     * block finder as a separate on-chain tx after confirmation. */
-    if (!ckp->solo && g64 > FINDER_BONUS_SATS + (uint64_t)DUST_LIMIT_SATS * 2)
-        finder_bonus = FINDER_BONUS_SATS;
-    const uint64_t distributable = g64 - finder_bonus; /* base for pool fee + miner payouts */
+    /* Full block reward is distributable. The 1 BCH finder bonus is paid from
+     * pool wallet funds after 100 confirmations, not reserved in the coinbase. */
+    const uint64_t distributable = g64;
 
     f64 = ceil(distributable * (ckp->pool_fee/100.0)); // pool fee gross (including dev donation)
     if (f64 > distributable) f64 = distributable;
@@ -888,8 +884,8 @@ static uint64_t add_coinbase_payouts(const pool_t *ckp, workbase_t *wb, cb1_buff
     if (true) {
         // payout to miners directly in SPLNS mode (also pay out hard-coded dev donations)
 
-        // first, add pool fee + finder bonus reserve, if any
-        if (likely((f64 + finder_bonus) >= DUST_LIMIT_SATS && sdata->scriptlen)) {
+        // first, add pool fee output, if any
+        if (likely(f64 >= DUST_LIMIT_SATS && sdata->scriptlen)) {
             df64 = DONATION_FRACTION > 0 && !ckp->disable_dev_donation
                     ? (f64 / DONATION_FRACTION) * sdata->n_good_donation
                     : 0;
@@ -901,11 +897,10 @@ static uint64_t add_coinbase_payouts(const pool_t *ckp, workbase_t *wb, cb1_buff
             }
             pf64 = f64 - df64;
 
-            // add pool net fee + finder bonus reserve (finder bonus paid to block finder post-confirmation)
-            pool_amt_pos = add_output_(cb1_buf, pf64 + finder_bonus, sdata->scriptbin, sdata->scriptlen);
+            // add pool net fee output
+            pool_amt_pos = add_output_(cb1_buf, pf64, sdata->scriptbin, sdata->scriptlen);
             pool_has_amt = true;
-            LOGDEBUG("%1.8f pool fee + %1.8f finder bonus reserve to pool address: %s",
-                     pf64 / (double)SATOSHIS, finder_bonus / (double)SATOSHIS, ckp->bchaddress);
+            LOGDEBUG("%1.8f pool fee to pool address: %s", pf64 / (double)SATOSHIS, ckp->bchaddress);
             // now add donations for each dev
             int64_t leftover = df64;
             if (df64 && don_each) {
@@ -932,7 +927,7 @@ static uint64_t add_coinbase_payouts(const pool_t *ckp, workbase_t *wb, cb1_buff
         assert(pool_has_amt); \
         memcpy(cb1_buf->buffer.value + pool_amt_pos, &le_amt, sizeof(le_amt)); \
     } while(0)
-                SET_POOL_AMT(pf64 + finder_bonus);
+                SET_POOL_AMT(pf64);
                 LOGDEBUG("%f leftover from dev donations back to pool address: %s", d, ckp->bchaddress);
             } else if (unlikely(leftover < 0)) {
                 // This should never happen but is here as a defensive programming measure.
@@ -943,7 +938,7 @@ static uint64_t add_coinbase_payouts(const pool_t *ckp, workbase_t *wb, cb1_buff
             f64 = pf64 = 0;
         }
 
-        assert(!(pf64 || finder_bonus) || pool_has_amt); // if there is a pool fee or finder bonus, there must be a pool output above.
+        assert(!pf64 || pool_has_amt); // if there is a pool fee, there must be a pool output above.
 
         if (ckp->solo) {
             // SOLO mode: return early:
@@ -973,14 +968,14 @@ static uint64_t add_coinbase_payouts(const pool_t *ckp, workbase_t *wb, cb1_buff
         if ( c64 && (pool_has_amt || c64 >= DUST_LIMIT_SATS) && sdata->scriptlen) {
             bool ok = false;
             pf64 = (uint64_t)(((int64_t)pf64) + c64); // add or deduct modifiction returned from add_user_generation
-            if (!pool_has_amt && pf64 + finder_bonus >= DUST_LIMIT_SATS) {
+            if (!pool_has_amt && pf64 >= DUST_LIMIT_SATS) {
                 // pay extra change > dust limit back to pool, new output at end
-                pool_amt_pos = add_output_(cb1_buf, pf64 + finder_bonus, sdata->scriptbin, sdata->scriptlen);
+                pool_amt_pos = add_output_(cb1_buf, pf64, sdata->scriptbin, sdata->scriptlen);
                 pool_has_amt = true;
                 ok = true;
-            } else if (pool_has_amt && pf64 + finder_bonus >= DUST_LIMIT_SATS) {
+            } else if (pool_has_amt && pf64 >= DUST_LIMIT_SATS) {
                 // pay dust back to pool, re-use pool fee output (output 0)
-                SET_POOL_AMT(pf64 + finder_bonus);
+                SET_POOL_AMT(pf64);
                 ok = true;
             }
             if (ok) {
@@ -1003,16 +998,16 @@ static uint64_t add_coinbase_payouts(const pool_t *ckp, workbase_t *wb, cb1_buff
             // ourselves (missing pool bchaddress?)
             LOGWARNING("%"PRId64" sats in change left over after generating coinbase outs! FIXME!", c64);
         }
-        if (!pool_has_amt && (pf64 || finder_bonus))
-            LOGWARNING("%"PRId64" sats in pool output left over after generating coinbase outs! FIXME!", pf64 + finder_bonus);
-        if (pool_has_amt && pf64 + finder_bonus < DUST_LIMIT_SATS)
-            LOGWARNING("%"PRId64" sats in pool output is below dust limit (%d)! FIXME!", pf64 + finder_bonus, (int)DUST_LIMIT_SATS);
+        if (!pool_has_amt && pf64)
+            LOGWARNING("%"PRId64" sats in pool output left over after generating coinbase outs! FIXME!", pf64);
+        if (pool_has_amt && pf64 < DUST_LIMIT_SATS)
+            LOGWARNING("%"PRId64" sats in pool output is below dust limit (%d)! FIXME!", pf64, (int)DUST_LIMIT_SATS);
         if (wb->payout) {
             // tabulate this as "pool fee" in json
             json_set_double(wb->payout, "fee", f64 / (double)SATOSHIS);
             json_set_double(wb->payout, "net_fee", pf64 / (double)SATOSHIS);
             json_set_double(wb->payout, "dev_donation", df64 / (double)SATOSHIS);
-            json_set_double(wb->payout, "finder_bonus", finder_bonus / (double)SATOSHIS);
+            json_set_double(wb->payout, "finder_bonus", FINDER_BONUS_SATS / (double)SATOSHIS);
         }
     } else {
         // payout directly to pool in this mode (legacy asicseer-db mode);
@@ -2075,8 +2070,10 @@ static void orphan_block(sdata_t *sdata, json_t *val)
     mutex_unlock(&sdata->stats_lock);
 }
 
-/* Find the first unconfirmed block that is 2 confirms ago and remove it
- * from the list, declaring it confirmed or orphaned. */
+/* Find the first unconfirmed block that is 100 confirms ago and remove it
+ * from the list, declaring it confirmed or orphaned. 100 confirmations is
+ * the coinbase maturity period for BCH -- we wait this long so the pool
+ * wallet has spendable funds before paying the 1 BCH block finder bonus. */
 static void check_unconfirmed(pool_t *ckp, sdata_t *sdata, const int height)
 {
     char heighthash[68] = {0}, *rhash, *fname, *newname;
@@ -2091,7 +2088,7 @@ static void check_unconfirmed(pool_t *ckp, sdata_t *sdata, const int height)
         json_t *val = blocksolve->val;
 
         json_get_int(&solveheight, val, "height");
-        if (height - solveheight < 2)
+        if (height - solveheight < 100)
             continue;
         DL_DELETE(stats->unconfirmed, blocksolve);
         found = blocksolve;
