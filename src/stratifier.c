@@ -59,7 +59,7 @@ static const double nonces = 4294967296;
 #define PAYOUT_USERS    100 /* Number of top users that get reward each block */
 #define PAYOUT_REWARDS  150 /* Max number of users rewarded each block */
 #define SATOSHIS	100000000 /* Satoshi to a BTC */
-#define FINDER_BONUS_SATS 100000000ULL /* 1 BCH paid to block finder from pool wallet after 100 confirmations */
+#define FINDER_BONUS_SATS 100000000ULL /* 1 BCH reserved in coinbase, paid to block finder after 100 confirmations (coinbase maturity) */
 #if PAYOUT_REWARDS * CBGENLEN > MAX_CB_SPACE
 #error Please set PAYOUT_REWARDS to fit inside a coinbase tx (MAX_CB_SPACE)!
 #endif
