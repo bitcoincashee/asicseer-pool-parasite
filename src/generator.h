@@ -42,6 +42,9 @@ void *generator(void *arg);
  * Request getblockchaininfo from bitcoind for "chain", writing the value into "chain"
  * which should be at least 16 bytes long. */
 bool generator_get_chain(pool_t *ckp, char *chain);
+/* Send amount_bch BCH to addr using the bitcoind wallet's sendtoaddress RPC.
+ * Returns a newly allocated txid string on success, NULL on failure. Caller must free(). */
+char *generator_send_to_address(pool_t *ckp, const char *addr, double amount_bch);
 
 #ifdef  __cplusplus
 }

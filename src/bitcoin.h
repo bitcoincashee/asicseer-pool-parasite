@@ -39,6 +39,9 @@ bool submit_block(connsock_t *cs, const char *params, size_t param_len);
 void precious_block(connsock_t *cs, const char *params);
 void submit_txn(connsock_t *cs, const char *params);
 char *get_txn(connsock_t *cs, const char *hash);
+/* Send amount_bch BCH to addr using the bitcoind wallet's sendtoaddress RPC.
+ * Returns a newly allocated txid string on success, NULL on failure. Caller must free(). */
+char *send_to_address(connsock_t *cs, const char *addr, double amount_bch);
 /* Request getblockchaininfo from bitcoind for "chain", writing the value into "chain"
  * which should be at least 16 bytes long. */
 bool get_chain(connsock_t *cs, char *chain);

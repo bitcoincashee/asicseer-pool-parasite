@@ -951,6 +951,24 @@ out:
     return ret;
 }
 
+char *generator_send_to_address(pool_t *ckp, const char *addr, double amount_bch)
+{
+    gdata_t *gdata = ckp->gdata;
+    server_instance_t *si;
+    char *ret = NULL;
+    connsock_t *cs;
+
+    si = get_current_si_threadsafe(gdata);
+    if (unlikely(!si)) {
+        LOGWARNING("No live current server in generator_send_to_address");
+        goto out;
+    }
+    cs = &si->cs;
+    ret = send_to_address(cs, addr, amount_bch);
+out:
+    return ret;
+}
+
 static bool parse_notify(pool_t *ckp, proxy_instance_t *proxi, json_t *val)
 {
     const char *prev_hash, *bbversion, *nbit, *ntime;

@@ -44,5 +44,5 @@ HEALTHCHECK --interval=60s \
 	    --start-period=30s \
 	    CMD [ "nc", "-z", "localhost", "3333" ]
             
-CMD ["/usr/bin/asicseer-pool", "-B", "-k", "-c", "/asicseer/conf/asicseer-pool.conf"]
+CMD ["/usr/bin/asicseer-pool", "-k", "-c", "/asicseer/conf/asicseer-pool.conf"]
 

@@ -466,6 +466,40 @@ out:
 }
 
 
+char *send_to_address(connsock_t *cs, const char *addr, double amount_bch)
+{
+    char *rpc_req, *ret = NULL;
+    json_t *val, *res_val;
+
+    if (unlikely(!cs->alive)) {
+        LOGWARNING("Failed to send_to_address: connsock dead");
+        goto out;
+    }
+
+    ASPRINTF(&rpc_req, "{\"method\": \"sendtoaddress\", \"params\": [\"%s\", %.8f]}\n",
+             addr, amount_bch);
+    val = json_rpc_response(cs, rpc_req);
+    dealloc(rpc_req);
+    if (!val) {
+        LOGWARNING("%s:%s Failed to get valid json response to sendtoaddress", cs->url, cs->port);
+        goto out;
+    }
+    res_val = json_object_get(val, "result");
+    if (res_val && !json_is_null(res_val) && json_is_string(res_val)) {
+        ret = strdup(json_string_value(res_val));
+        LOGWARNING("Block finder bonus %.8f BCH sent to %s, txid: %s", amount_bch, addr, ret);
+    } else {
+        json_t *err_val = json_object_get(val, "error");
+        char *err_s = err_val && !json_is_null(err_val) ? json_dumps(err_val, JSON_NO_UTF8) : NULL;
+        LOGWARNING("%s:%s sendtoaddress %.8f BCH to %s FAILED: %s",
+                   cs->url, cs->port, amount_bch, addr, err_s ? err_s : "(unknown error)");
+        free(err_s);
+    }
+    json_decref(val);
+out:
+    return ret;
+}
+
 static bool check_bitcoind_getzmqnotifications_matches_proto_and_port(const json_t *array,
                                                                       const char *type, const char *url,
                                                                       const char **any)
