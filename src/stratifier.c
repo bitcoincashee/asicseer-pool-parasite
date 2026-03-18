@@ -51,7 +51,7 @@ static uchar scriptsig_header_bin[41];
 #define MAX_CB_SPACE (MAX_COINBASE_TX_LEN - TX_RESERVE_SIZE)
 static const double nonces = 4294967296;
 
-#define HERP_N		5 /* 5 * network diff SPLNS */
+#define HERP_N		100 /* 100 * network diff SPLNS */
 #define CBGENLEN	34 /* Maximum extra space required per user in coinbase */
 #define DERP_DUST	5460 /* Minimum DERP to get onto payout list */
 #define PAYOUT_DUST	DUST_LIMIT_SATS /* Minimum payout not dust -- currently 546 sats */
