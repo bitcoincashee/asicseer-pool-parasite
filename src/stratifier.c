@@ -6186,6 +6186,11 @@ static json_t *parse_subscribe(stratum_instance_t *client, const int64_t client_
     // This call here won't spam a new difficulty change notification message, since the normal
     // call path will send the initial difficulty message in init_client() later anyway. -Calin
     client_apply_mindiff_override(client);
+    /* Port 3334 is high-diff port: set minimum diff of 500000 before init_client sends it */
+    if (client->server == 1 && client->diff < 500000) {
+        client->diff = 500000;
+        client->suggest_diff = 500000;
+    }
 
     client->subscribed = true;
 
@@ -6783,7 +6788,12 @@ out:
             wb->readcount--;
             ck_wunlock(&sdata->workbase_lock);
 
-            client_apply_mindiff_override(client); /* ensure diff respects mindiff_overrides */
+            client_apply_mindiff_override(client);
+            /* Port 3334 is high-diff port: enforce minimum diff of 500000 */
+            if (client->server == 1 && client->diff < 500000) {
+                client->diff = 500000;
+                client->suggest_diff = 500000;
+            }
             stratum_send_diff(sdata, client);
         }
     }
@@ -7736,9 +7746,20 @@ static void suggest_diff(pool_t *ckp, stratum_instance_t *client, const char *me
 static void init_client(const stratum_instance_t *client, const int64_t client_id)
 {
     sdata_t *sdata = client->sdata;
+    pool_t *ckp = client->ckp;
 
     stratum_send_diff(sdata, client);
-    if (!client->ckp->solo)
+    /* Advertise version rolling mask for overt ASIC Boost (e.g. NiceHash) */
+    if (ckp->version_mask) {
+        json_t *json_msg;
+        char version_str[12];
+        sprintf(version_str, "%08x", ckp->version_mask);
+        JSON_CPACK(json_msg, "{sosss[s]}", "id", json_null(),
+                   "method", "mining.set_version_mask",
+                   "params", version_str);
+        stratum_add_send(sdata, json_msg, client_id, SM_CONFIGURE);
+    }
+    if (!ckp->solo)
         stratum_send_update(sdata, client_id, true);
 }
 
@@ -9002,6 +9023,10 @@ static void sauth_process(pool_t *ckp, json_params_t *jp)
         client->dropped = true;
         goto out;
     }
+
+    /* Port 3334 is high-diff port (e.g. NiceHash): enforce minimum diff of 500000 */
+    if (client->server == 1 && client->suggest_diff < 500000)
+        client->suggest_diff = 500000;
 
     /* Update the client now if they have set a valid mindiff different
      * from the startdiff. suggest_diff overrides worker mindiff */

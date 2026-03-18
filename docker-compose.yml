@@ -17,6 +17,7 @@ services:
     restart: unless-stopped
     ports:
       - "3333:3333"
+      - "3334:3334"
     volumes:
       - ./pool-conf:/asicseer/conf
       - ./pool-logs:/asicseer/logs
