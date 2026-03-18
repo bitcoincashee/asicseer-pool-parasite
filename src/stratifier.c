@@ -1029,162 +1029,157 @@ static void generate_coinbase(const pool_t *ckp, workbase_t *wb)
 {
     const int64_t tstart = time_micros();
     static const size_t COINB1_INITIAL_CAPACITY = 512;
-    uint8_t random_bytes[8];
     char header[272];
-    cb1_buffer_t cb1_buf;
-    strbuffer_t *strbuf = &cb1_buf.buffer; // for convenience -- used below
+    cb1_buffer_t cb1_buf, cb2_buf;
     int len = 0;
-
-    get_random_bytes(random_bytes, sizeof(random_bytes));
 
     // ensure these are cleared (they normally already are)
     wb->coinb1bin = wb->coinb2bin = NULL;
     wb->coinb1len = wb->coinb2len = 0;
 
-    /* Pre-allocate 512 bytes */
-    cb1_buffer_init(&cb1_buf, COINB1_INITIAL_CAPACITY);
+    wb->enonce1varlen = ckp->nonce1length;
+    wb->enonce2varlen = ckp->nonce2length;
 
-    strbuffer_append_bytes(strbuf, scriptsig_header_bin, 41); // fixed header length
-    strbuffer_append_byte(strbuf, 0); // Script length is filled in at the end @ buffer position [41]
+    /* ===== Build coinb1 =====
+     * coinb1 = [tx_header(41)] + [scriptsig_len(1)] + [height] + [tag]
+     * The enonce1+enonce2 split follows coinb1 and sits inside the scriptSig.
+     * scriptsig_len covers height+tag+enonce1+enonce2 total bytes. */
+    cb1_buffer_init(&cb1_buf, COINB1_INITIAL_CAPACITY);
+    strbuffer_t * const cb1_strbuf = &cb1_buf.buffer;
+
+    strbuffer_append_bytes(cb1_strbuf, scriptsig_header_bin, 41); // fixed header
+    strbuffer_append_byte(cb1_strbuf, 0); // scriptsig length filled in below @ [41]
 
     /* Put block height at start of scriptsig (consensus rule) */
     {
         uint8_t buf[16];
         len = ser_cbheight(buf, wb->height);
-        strbuffer_append_bytes(strbuf, buf, len);
+        strbuffer_append_bytes(cb1_strbuf, buf, len);
     }
 
-    len = strbuf->length - 41 - 1; // account for the header and scriptsig length byte.
+    len = cb1_strbuf->length - 41 - 1; // bytes of scriptsig content so far
     {
-        // ensure that what follows is <=100 bytes total for the scriptsig otherwise
-        // block will be rejected as per BCH consensus rules.
-        const int spaceLeft = MAX_COINBASE_SCRIPTSIG_LEN - len;
+        /* Reserve enonce space when checking how much room is left for the tag */
+        const int spaceLeft = MAX_COINBASE_SCRIPTSIG_LEN - len - wb->enonce1varlen - wb->enonce2varlen;
         if (ckp->n_bchsigs > 0) {
             // pick a random coinbase text from the array of sigs defined in conf "bchsig"
-            // (this may be just 1 item or empty)
             const int which = random_threadsafe(ckp->n_bchsigs);
             __typeof__(ckp->bchsigs) sig = ckp->bchsigs + which;
             if (sig->siglen > 0 && sig->sig && spaceLeft > 0) {
                 const int n = MIN(sig->siglen, spaceLeft);
-                const size_t pos = strbuf->length;
-                strbuffer_append_bytes(strbuf, sig->sig, n);
-                LOGDEBUG("CB text: \"%.*s\"", n, strbuf->value + pos);
+                const size_t pos = cb1_strbuf->length;
+                strbuffer_append_bytes(cb1_strbuf, sig->sig, n);
+                LOGDEBUG("CB text: \"%.*s\"", n, cb1_strbuf->value + pos);
             }
         }
     }
 
-    len = strbuf->length - 41 - 1; // again, account for the header and scriptsig length byte.
-    /* Set the scriptsig length now - always 1 byte of data (length is always <=100) */
-    strbuf->uvalue[41] = (uint8_t)len;
-
-    if (unlikely(len > MAX_COINBASE_SCRIPTSIG_LEN || len <= 0)) {
-        // Paranoia: This should never happen. But if it does, we need to quit ASAP since mining will break.
-        // Taking this branch indicates a bug in the code above.
-        quit(1, "INTERNAL ERROR: Max coinbase scriptsig length is %d, but we generated a scriptsig of "
-             "%d bytes.  File: %s, line: %d", (int)MAX_COINBASE_SCRIPTSIG_LEN, (int)(wb->coinb1bin[41]),
-             __FILE__, (int)__LINE__);
-    }
-    // after scriptsig, put sequence
-    strbuffer_append_bytes(strbuf, "\xff\xff\xff\xff", 4);
-
-    // at this point strbuf (and cb1_buf) points to the tx.vout length field (compact size).
-    // reserve 3 bytes for this field.  Common case is we will have to move the data back by 2 bytes, however.
-    const int compact_size_pos = strbuf->length;
-#define compact_size_reserved 3
+    len = cb1_strbuf->length - 41 - 1; // bytes of scriptsig content (height + tag)
+    /* Set scriptsig_len = height+tag bytes + enonce1varlen + enonce2varlen */
     {
-        uint8_t resv[compact_size_reserved];
-        memset(resv, 0, compact_size_reserved);
-        strbuffer_append_bytes(strbuf, resv, compact_size_reserved);
-    }
-    int first_tx_pos = strbuf->length;
-
-    /* Add all the payout outputs (including pool fees and donations, if any, etc).
-       In the rare case of leftover satoshis, they are guaranteed to go back to the pool
-       as a fallback.  The below call always succeeds if it returns. */
-    const uint64_t solo_amount = add_coinbase_payouts(ckp, wb, &cb1_buf);
-
-    if (ckp->solo) {
-        // SOLO mode, leave room for 1 output for the solo miner. This output goes at the end of cb2
-        ++cb1_buf.num_outs;
+        const int total_scriptsig_len = len + wb->enonce1varlen + wb->enonce2varlen;
+        if (unlikely(total_scriptsig_len > MAX_COINBASE_SCRIPTSIG_LEN || total_scriptsig_len <= 0)) {
+            quit(1, "INTERNAL ERROR: Max coinbase scriptsig length is %d, but we generated a scriptsig of "
+                 "%d bytes.  File: %s, line: %d", (int)MAX_COINBASE_SCRIPTSIG_LEN, total_scriptsig_len,
+                 __FILE__, (int)__LINE__);
+        }
+        cb1_strbuf->uvalue[41] = (uint8_t)total_scriptsig_len;
     }
 
-    /* OP_RETURN output at end, after all payouts (note: in SOLO mode the solo miner payout is after this) */
+    /* Coinb1 done */
     {
-        // append OP_RETURN output (this leaves space for enonce1 and enonce2)
-        wb->enonce1varlen = ckp->nonce1length;
-        wb->enonce2varlen = ckp->nonce2length;
-        static const uint8_t amt0[8] = {0,0,0,0,0,0,0,0};
-        // script is: OP_RETURN length_byte(20) enonce1_bytes[4] enonce2_bytes[8] random_bytes[8]
-        int scriptlen = 1 + 1 + wb->enonce1varlen + wb->enonce2varlen + sizeof(random_bytes);
-        strbuffer_append_bytes(strbuf, amt0, 8); // amount
-        assert(scriptlen < 223 && scriptlen > 2); // script should be > 2 bytes and less than max OP_RETURN size
-        strbuffer_append_byte(strbuf, (uint8_t)scriptlen); // push script length
-        strbuffer_append_byte(strbuf, 0x6a); // push OP_RETURN
-        strbuffer_append_byte(strbuf, (uint8_t)(scriptlen - 2)); // push OP_RETURN payload length
-        ++cb1_buf.num_outs; // increment output counter for this OP_RETURN output
-    }
-    /* Cb1 is done. Take the pointer, assign it to coinb1bin, write compact size before the outs. */
-    {
-        // note that we may have to move the data blob back by 2 bytes here if <253 outs.
-        const size_t num_outs = cb1_buf.num_outs;
         size_t endpos, cap;
         cb1_buffer_take(&cb1_buf, &wb->coinb1bin, &endpos, &cap);
         LOGDEBUG("Coinb1 taken, endpos: %lu cap: %lu", endpos, cap);
         wb->coinb1len = (int)endpos;
-        assert(((size_t)wb->coinb1len) == endpos && wb->coinb1len > -1 && "INTERNAL ERROR: integer overflow");
+        assert(((size_t)wb->coinb1len) == endpos && wb->coinb1len > 0 && "INTERNAL ERROR: integer overflow");
+    }
+    wb->coinb1 = bin2hex(wb->coinb1bin, wb->coinb1len);
+    LOGDEBUG("Coinb1: %s", wb->coinb1);
+    /* Coinbase 1 complete */
+
+    /* ===== Build coinb2 =====
+     * coinb2 = [sequence(4)] + [compact_size] + [payout_outputs] + [nlocktime(4)]
+     * For SOLO mode: coinb2 ends with solo_miner_amount(8); nlocktime goes in coinb3. */
+    cb1_buffer_init(&cb2_buf, COINB1_INITIAL_CAPACITY);
+    strbuffer_t * const cb2_strbuf = &cb2_buf.buffer;
+
+    /* Input sequence */
+    strbuffer_append_bytes(cb2_strbuf, "\xff\xff\xff\xff", 4);
+
+    /* Reserve 3 bytes for compact_size (worst case). Common case needs only 1. */
+    const int compact_size_pos = cb2_strbuf->length;
+#define compact_size_reserved 3
+    {
+        uint8_t resv[compact_size_reserved];
+        memset(resv, 0, compact_size_reserved);
+        strbuffer_append_bytes(cb2_strbuf, resv, compact_size_reserved);
+    }
+    int first_tx_pos = cb2_strbuf->length;
+
+    /* Add all payout outputs (pool fee, dev donations, miner payouts).
+       In the rare case of leftover satoshis, they are guaranteed to go back to the pool.
+       The below call always succeeds if it returns. */
+    const uint64_t solo_amount = add_coinbase_payouts(ckp, wb, &cb2_buf);
+
+    if (ckp->solo) {
+        /* Reserve slot for solo miner output (amount appended below; script comes from userwb) */
+        ++cb2_buf.num_outs;
+    }
+
+    /* Append nlocktime (non-SOLO) or solo miner amount (SOLO) before taking the buffer */
+    if (!ckp->solo) {
+        strbuffer_append_bytes(cb2_strbuf, "\x00\x00\x00\x00", 4); /* nlocktime = 0 */
+    } else {
+        const uint64_t amt = htole64(solo_amount);
+        strbuffer_append_bytes(cb2_strbuf, &amt, sizeof(amt)); /* solo miner payout amount */
+    }
+
+    /* Take buffer, write compact_size, fix alignment */
+    {
+        // note that we may have to move the data blob back by 2 bytes here if <253 outs.
+        const size_t num_outs = cb2_buf.num_outs;
+        size_t endpos, cap;
+        cb1_buffer_take(&cb2_buf, &wb->coinb2bin, &endpos, &cap);
+        LOGDEBUG("Coinb2 taken, endpos: %lu cap: %lu", endpos, cap);
+        wb->coinb2len = (int)endpos;
+        assert(((size_t)wb->coinb2len) == endpos && wb->coinb2len > -1 && "INTERNAL ERROR: integer overflow");
         uint8_t compact_size_buf[9];
         const int nb = write_compact_size(compact_size_buf, num_outs);
         if (unlikely(nb > compact_size_reserved)) {
             quit(1, "INTERNAL ERROR: Got %lu outs in coinbase! This is unsupported!", num_outs);
         } else if (nb == compact_size_reserved) {
             // >= 253 outs. this is what we assumed as worst-case and we don't need to realign the data.
-            memcpy(wb->coinb1bin + compact_size_pos, compact_size_buf, nb);
+            memcpy(wb->coinb2bin + compact_size_pos, compact_size_buf, nb);
         } else if (nb == 1) {
             // < 253 outs, we need to slide the tx data blob backwards by 2 bytes.
-            const int blob_size = wb->coinb1len - first_tx_pos;
+            const int blob_size = wb->coinb2len - first_tx_pos;
             const int ndiff = compact_size_reserved - nb;
             assert(blob_size >= 0);
             assert(ndiff == first_tx_pos - (compact_size_pos + 1));
             if (blob_size) {
-                memmove(wb->coinb1bin + compact_size_pos + 1, wb->coinb1bin + first_tx_pos, blob_size);
+                memmove(wb->coinb2bin + compact_size_pos + 1, wb->coinb2bin + first_tx_pos, blob_size);
                 endpos -= ndiff;
-                wb->coinb1len -= ndiff;
-                LOGDEBUG("Coinb1 moved %d-byte blob backwards by %d bytes, endpos now: %d",
-                         blob_size, ndiff, wb->coinb1len);
+                wb->coinb2len -= ndiff;
+                LOGDEBUG("Coinb2 moved %d-byte blob backwards by %d bytes, endpos now: %d",
+                         blob_size, ndiff, wb->coinb2len);
             }
             first_tx_pos -= ndiff;
-            wb->coinb1bin[compact_size_pos] = *compact_size_buf; // write size byte
+            wb->coinb2bin[compact_size_pos] = *compact_size_buf; // write size byte
         } else {
             // this should never happen.
             quit(1, "Unexpected compact_size number of bytes!");
         }
         LOGDEBUG("num_outs: %lu", num_outs);
     }
-    wb->coinb1 = bin2hex(wb->coinb1bin, wb->coinb1len);
-    LOGDEBUG("Coinb1: %s", wb->coinb1);
-    /* Coinbase 1 complete */
 
     if (!ckp->solo) {
-        wb->coinb2len = sizeof(random_bytes) + 4; // timestamp (end of OP_RETURN) + nlocktime == 4 bytes of zeroes at end
-        wb->coinb2bin = ckzalloc(wb->coinb2len);
-        memcpy(wb->coinb2bin, random_bytes, sizeof(random_bytes)); // copy random bytes to end of OP_RETURN
         wb->solo.coinb3len = 0; // paranoia, should already be 0
     } else {
-        // Handle SOLO mode here:
-        // - where we *don't* write nlocktime to coinb2; instead we rely on coinb3 for the 4 empty nlocktime bytes
-        // - we do write the random_bytes end of OP_RETURN
-        // - we do write the amount here for the solo miner payout which must end at end of coinb2
-        wb->coinb2len = sizeof(random_bytes) + 8; // timestamp (end of OP_RETURN) + amount for the miner-specific payout
-        wb->coinb2bin = ckzalloc(wb->coinb2len);
-        size_t offset = 0;
-        memcpy(wb->coinb2bin + offset, random_bytes, sizeof(random_bytes));
-        offset += sizeof(random_bytes);
-        const uint64_t amt = htole64(solo_amount);
-        memcpy(wb->coinb2bin + offset, &amt, sizeof(amt));
-        offset += sizeof(amt);
         memset(wb->solo.coinb3bin, 0, 4);
         wb->solo.coinb3len = 4; // nlocktime bytes
     }
+
     wb->coinb2 = bin2hex(wb->coinb2bin, wb->coinb2len);
     LOGDEBUG("Coinb2: %s", wb->coinb2);
     /* Coinbase 2 complete */
