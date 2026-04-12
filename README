@@ -28,8 +28,7 @@ It has been updated and reworked to add features and to support Bitcoin Cash
 * Added larger merkle tree support (for mining 32MB blocks)
 * Added cash address support
 * Configurable pool fee support
-   - Features 20% of pool fee as a dev donation to Calin (me), and Bitcoin Cash
-     Node wallets, by default.
+   - Dev donations to upstream developers are supported but disabled by default.
 * Added "mindiff_overrides" which allows a pool to give out larger minimum and
   starting difficulty for stratum clients matching a particular user agent
   string (useful for NiceHash, which requires pools have a high difficulty).
@@ -337,7 +336,7 @@ can be used for comments. The options recognised are as follows:
         ]
 
 "disable_dev_donation":
-    Defaults false. If true, disable dev donations specified in donation.h.
+    Defaults true. If false, enable dev donations specified in donation.h.
 
 "fee_discounts":
     Offer discounts to specific users, keyed off their mining address. 1.0 =
