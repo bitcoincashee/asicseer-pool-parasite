@@ -7886,8 +7886,6 @@ static void parse_method(pool_t *ckp, sdata_t *sdata, stratum_instance_t *client
         json_object_set_nocheck(val, "id", id_val);
         json_object_set_new_nocheck(val, "error", json_null());
         stratum_add_send(sdata, val, client_id, SM_SUBSCRIBERESULT);
-        if (likely(client->subscribed))
-            init_client(client, client_id);
         return;
     }
 
@@ -9039,11 +9037,13 @@ static void sauth_process(pool_t *ckp, json_params_t *jp)
         mindiff = client->worker_instance->mindiff;
     if (mindiff) {
         mindiff = MAX(ckp->mindiff, mindiff);
-        if (mindiff != client->diff) {
+        if (mindiff != client->diff)
             client->diff = mindiff;
-            stratum_send_diff(sdata, client);
-        }
     }
+    /* Send initial difficulty and work. Called here (post-auth) rather than on
+     * subscribe so that mining.configure response is sent first, letting
+     * NiceHash/Braiins verifiers see version-rolling confirmation before work. */
+    init_client(client, client_id);
 
 out:
     dec_instance_ref(sdata, client);
