@@ -7575,6 +7575,7 @@ static json_t *stratum_notify__(const workbase_t *wb, const bool clean, const ui
 {
     json_t *val;
 
+    (void)version_mask; /* version rolling advertised via mining.configure response only */
     JSON_CPACK(val, "{s:[ssssosssb],s:o,s:s}",
                "params",
                wb->idstring,
@@ -7588,12 +7589,6 @@ static json_t *stratum_notify__(const workbase_t *wb, const bool clean, const ui
                clean,
                "id", json_null(),
                "method", "mining.notify");
-    /* NiceHash SHA256AsicBoost / Braiins extension: append version mask as 10th param */
-    if (version_mask) {
-        char vmask_str[12];
-        sprintf(vmask_str, "%08x", version_mask);
-        json_array_append_new(json_object_get(val, "params"), json_string(vmask_str));
-    }
     return val;
 }
 
@@ -7643,6 +7638,7 @@ static json_t *user_solo_notify__(const workbase_t *wb, const user_instance_t *u
         return NULL;
     }
 
+    (void)version_mask;
     JSON_CPACK(val, "{s:[ssssosssb],s:o,s:s}",
                "params",
                wb->idstring,
@@ -7656,11 +7652,6 @@ static json_t *user_solo_notify__(const workbase_t *wb, const user_instance_t *u
                clean,
                "id", json_null(),
                "method", "mining.notify");
-    if (version_mask) {
-        char vmask_str[12];
-        sprintf(vmask_str, "%08x", version_mask);
-        json_array_append_new(json_object_get(val, "params"), json_string(vmask_str));
-    }
     return val;
 }
 
