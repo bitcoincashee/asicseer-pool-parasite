@@ -7328,13 +7328,11 @@ static json_t *parse_submit(stratum_instance_t *client, json_t *json_msg,
     version_mask = json_string_value(json_array_get(params_val, 5));
     if (version_mask && strlen(version_mask) && validhex(version_mask)) {
         sscanf(version_mask, "%x", &version_mask32);
-        // check version mask
-        if (version_mask32 && ((~ckp->version_mask) & version_mask32) != 0) {
-            // means client changed some bits which server doesn't allow to change
-            err = SE_INVALID_VERSION_MASK;
-            *err_val = JSON_ERR(err);
-            goto out;
-        }
+        /* Miners may send either just the rolling bits (e.g. 0x00002000)
+         * or the full rolled version (e.g. 0x20002000). Normalise to
+         * rolling-bits-only so the mask check and submission_diff both
+         * work correctly regardless of which convention the miner uses. */
+        version_mask32 &= ckp->version_mask;
     }
     if (safecmp(workername, client->workername)) {
         err = SE_WORKER_MISMATCH;
