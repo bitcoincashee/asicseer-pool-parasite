@@ -6665,11 +6665,12 @@ static void client_auth(pool_t *ckp, stratum_instance_t *client, user_instance_t
     client->authorising = false;
 }
 
-static json_t *user_solo_notify__(const workbase_t *wb, const user_instance_t *user, const bool clean);
+static json_t *user_solo_notify__(const workbase_t *wb, const user_instance_t *user, const bool clean,
+                                  const uint32_t version_mask);
 
 static void update_solo_client(sdata_t *sdata, workbase_t *wb, const int64_t client_id, user_instance_t *user_instance)
 {
-    json_t *json_msg = user_solo_notify__(wb, user_instance, true);
+    json_t *json_msg = user_solo_notify__(wb, user_instance, true, sdata->ckp->version_mask);
 
     stratum_add_send(sdata, json_msg, client_id, SM_UPDATE);
 }
@@ -7570,7 +7571,7 @@ out:
 }
 
 /* Must enter with workbase_lock held */
-static json_t *stratum_notify__(const workbase_t *wb, const bool clean)
+static json_t *stratum_notify__(const workbase_t *wb, const bool clean, const uint32_t version_mask)
 {
     json_t *val;
 
@@ -7587,6 +7588,12 @@ static json_t *stratum_notify__(const workbase_t *wb, const bool clean)
                clean,
                "id", json_null(),
                "method", "mining.notify");
+    /* NiceHash SHA256AsicBoost / Braiins extension: append version mask as 10th param */
+    if (version_mask) {
+        char vmask_str[12];
+        sprintf(vmask_str, "%08x", version_mask);
+        json_array_append_new(json_object_get(val, "params"), json_string(vmask_str));
+    }
     return val;
 }
 
@@ -7595,7 +7602,7 @@ static void stratum_broadcast_update(sdata_t *sdata, const workbase_t *wb, const
     json_t *json_msg;
 
     ck_rlock(&sdata->workbase_lock);
-    json_msg = stratum_notify__(wb, clean);
+    json_msg = stratum_notify__(wb, clean, sdata->ckp->version_mask);
     ck_runlock(&sdata->workbase_lock);
 
     stratum_broadcast(sdata, json_msg, SM_UPDATE);
@@ -7616,14 +7623,15 @@ static void stratum_send_update(sdata_t *sdata, const int64_t client_id, const b
     }
 
     ck_rlock(&sdata->workbase_lock);
-    json_msg = stratum_notify__(sdata->current_workbase, clean);
+    json_msg = stratum_notify__(sdata->current_workbase, clean, ckp->version_mask);
     ck_runlock(&sdata->workbase_lock);
 
     stratum_add_send(sdata, json_msg, client_id, SM_UPDATE);
 }
 
 /* Hold instance and workbase lock */
-static json_t *user_solo_notify__(const workbase_t *wb, const user_instance_t *user, const bool clean)
+static json_t *user_solo_notify__(const workbase_t *wb, const user_instance_t *user, const bool clean,
+                                  const uint32_t version_mask)
 {
     int64_t id = wb->id;
     struct userwb *userwb;
@@ -7648,6 +7656,11 @@ static json_t *user_solo_notify__(const workbase_t *wb, const user_instance_t *u
                clean,
                "id", json_null(),
                "method", "mining.notify");
+    if (version_mask) {
+        char vmask_str[12];
+        sprintf(vmask_str, "%08x", version_mask);
+        json_array_append_new(json_object_get(val, "params"), json_string(vmask_str));
+    }
     return val;
 }
 
@@ -7666,7 +7679,7 @@ static void stratum_broadcast_solo_updates(sdata_t *sdata, bool clean)
         ck_wunlock(&sdata->instance_lock);
 
         ck_rlock(&sdata->workbase_lock);
-        json_msg = user_solo_notify__(sdata->current_workbase, client->user_instance, clean);
+        json_msg = user_solo_notify__(sdata->current_workbase, client->user_instance, clean, sdata->ckp->version_mask);
         ck_runlock(&sdata->workbase_lock);
 
         if (likely(json_msg))
