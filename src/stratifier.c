@@ -7762,16 +7762,6 @@ static void init_client(const stratum_instance_t *client, const int64_t client_i
     pool_t *ckp = client->ckp;
 
     stratum_send_diff(sdata, client);
-    /* Advertise version rolling mask for overt ASIC Boost (e.g. NiceHash) */
-    if (ckp->version_mask) {
-        json_t *json_msg;
-        char version_str[12];
-        sprintf(version_str, "%08x", ckp->version_mask);
-        JSON_CPACK(json_msg, "{sosss[s]}", "id", json_null(),
-                   "method", "mining.set_version_mask",
-                   "params", version_str);
-        stratum_add_send(sdata, json_msg, client_id, SM_CONFIGURE);
-    }
     if (!ckp->solo)
         stratum_send_update(sdata, client_id, true);
 }
