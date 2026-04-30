@@ -6175,8 +6175,8 @@ static json_t *parse_subscribe(stratum_instance_t *client, const int64_t client_
     ck_rlock(&sdata->workbase_lock);
     n2len = sdata->workbases->enonce2varlen;
     sprintf(sessionid, "%08x", client->session_id);
-    JSON_CPACK(ret, "[[[s,s]],s,i]", "mining.notify", sessionid, client->enonce1,
-            n2len);
+    JSON_CPACK(ret, "[[[s,s],[s,s]],s,i]", "mining.notify", sessionid,
+            "mining.set_difficulty", sessionid, client->enonce1, n2len);
     ck_runlock(&sdata->workbase_lock);
 
     // Apply any mindiff_overrides from config here.
